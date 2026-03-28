@@ -43,6 +43,13 @@ from .core import (
     yaml_module as yaml,
 )
 
+try:
+    from .stdin import stdin, is_stdin_type, parse_stdin
+except ImportError:
+    stdin = None
+    is_stdin_type = None
+    parse_stdin = None
+
 __all__ = [
     "command",
     "main",
@@ -67,4 +74,7 @@ __all__ = [
     "COLORS",
     "yaml",
     "print_framework_help",
+    "stdin",
+    "is_stdin_type",
+    "parse_stdin",
 ]

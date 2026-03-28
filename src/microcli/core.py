@@ -14,6 +14,12 @@ from typing import Annotated, Callable, Optional, Union
 
 __version__ = "0.2.0"
 
+try:
+    from .stdin import is_stdin_type, parse_stdin, _StdinType
+    STDIN_AVAILABLE = True
+except ImportError:
+    STDIN_AVAILABLE = False
+
 # ============================================================================
 # MARK: Types
 # ============================================================================
@@ -271,12 +277,14 @@ class Command:
         func: Callable,
         name: str,
         description: str,
-        params: dict
+        params: dict,
+        stdin_params=None
     ):
         self.func = func
         self.name = name
         self.description = description
         self.params = params
+        self.stdin_params = stdin_params or {}
         self._arg_names = list(params.keys())
 
     def explain(self, **kwargs) -> str:
@@ -331,27 +339,28 @@ def command(func: Callable) -> Callable:
 
     sig = inspect.signature(func)
 
+    stdin_params = {}
     for param in sig.parameters.values():
         arg_name = param.name
         arg_annotation = param.annotation
 
-        # Extract base type and help text
+        if STDIN_AVAILABLE and is_stdin_type(arg_annotation):  # type: ignore
+            stdin_params[arg_name] = arg_annotation
+            continue
+
         base_type = str  # Default to str
         help_text = ""
         is_flag = False
 
-        # Check if it's Annotated
         if hasattr(arg_annotation, '__metadata__'):
             base_type = arg_annotation.__args__[0]
             metadata = arg_annotation.__metadata__
             for item in metadata:
                 if isinstance(item, str):
                     help_text = item
-            # Bool type means it's a flag
             if base_type is bool:
                 is_flag = True
 
-        # Get default value from signature
         default = param.default
         has_default = default is not inspect.Parameter.empty
 
@@ -363,7 +372,7 @@ def command(func: Callable) -> Callable:
             is_flag=is_flag,
         )
 
-    _commands[name] = Command(func, name, func.__doc__ or "", params)
+    _commands[name] = Command(func, name, func.__doc__ or "", params, stdin_params)
     return _commands[name]
 
 
@@ -609,6 +618,15 @@ def main():
     kwargs = dict(vars(args))
     kwargs.pop('command', None)
     kwargs.pop('dry_run', None)
+
+    if cmd.stdin_params and STDIN_AVAILABLE:
+        stdin_content = sys.stdin.read() if not sys.stdin.isatty() else ""
+        for param_name, stdin_type in cmd.stdin_params.items():
+            if param_name not in kwargs or kwargs[param_name] is None:
+                if stdin_content:
+                    kwargs[param_name] = parse_stdin(stdin_content, stdin_type.inner_type)  # type: ignore
+                else:
+                    kwargs[param_name] = None
 
     # Execute command
     # Print docstring before execution
