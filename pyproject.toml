@@ -1,5 +1,5 @@
 [project]
-name = "micro-cli"
+name = "microcli-toolkit"
 version = "0.2.0"
 description = "Lean CLI framework for AI-friendly micro-apps"
 readme = "README.md"

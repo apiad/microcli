@@ -1,4 +1,4 @@
-# micro-cli
+# microcli-toolkit
 
 > Lean CLI framework for AI-friendly micro-apps
 
@@ -7,12 +7,10 @@ Microcli is a decorator-based CLI framework designed for building tools that age
 ## Installation
 
 ```bash
-pip install micro-cli
+pip install microcli-toolkit
 # or
-uv add micro-cli
+uv add microcli-toolkit
 ```
-
-Note: The package is named `micro-cli` (with dash) on PyPI, but the import is `microcli` (with underscore).
 
 ## Quick Start
 
