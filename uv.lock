@@ -150,7 +150,7 @@ wheels = [
 ]
 
 [[package]]
-name = "microcli"
+name = "micro-cli"
 version = "0.2.0"
 source = { editable = "." }
 
