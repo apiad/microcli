@@ -126,6 +126,68 @@ Output includes:
 - **Failure modes** — Errors discovered via `m.fail()` calls
 - **Happy paths** — Success messages via `m.ok()` calls
 
+## Complex Types from stdin
+
+For complex data structures, use `stdin[T]` to read JSON from stdin. Requires `pydantic` extra:
+
+```bash
+uv add microcli-toolkit --extra pydantic
+```
+
+### Basic Usage
+
+```python
+from microcli import command, stdin
+
+@command
+def create(
+    title: str,
+    metadata: stdin[dict],
+):
+    """Create a resource with metadata."""
+    m.ok(f"Creating {title} with {len(metadata)} properties")
+```
+
+```bash
+echo '{"tags": ["a", "b"], "priority": 1}' | python cmd.py create "My Title"
+```
+
+### With Pydantic Models
+
+```python
+from microcli import command, stdin
+from pydantic import BaseModel
+
+class NoteMetadata(BaseModel):
+    title: str
+    tags: list[str] = []
+    priority: int = 1
+
+@command
+def create(
+    content: str,
+    metadata: stdin[NoteMetadata],
+):
+    """Create a note with metadata."""
+    m.ok(f"Creating note: {metadata.title} (priority: {metadata.priority})")
+```
+
+```bash
+echo '{"title": "My Note", "tags": ["work", "urgent"]}' | python note.py create "Note body"
+```
+
+### Error Handling
+
+Invalid JSON:
+```
+✗ Invalid JSON: Expecting value
+```
+
+Pydantic validation errors:
+```
+✗ Validation error: 2 validation errors
+```
+
 ## License
 
 MIT
