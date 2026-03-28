@@ -405,15 +405,59 @@ def patterns() -> None:
    ────────────────{nc}
    Graceful degradation with informative messages.
 
-   {_code('def safe_read(path: Path) -> Optional[str]:')}
-   {_code('    try:')}
-   {_code('        return read(path)')}
-   {_code('    except FileNotFoundError:')}
-   {_code('        warn(f"File not found: {{path}}, using defaults")')}
-   {_code('        return None')}
-   {_code('    except PermissionError:')}
-   {_code('        fail(f"Permission denied: {{path}}")')}
+    {_code('def safe_read(path: Path) -> Optional[str]:')}
+    {_code('    try:')}
+    {_code('        return read(path)')}
+    {_code('    except FileNotFoundError:')}
+    {_code('        warn(f"File not found: {{path}}, using defaults")')}
+    {_code('        return None')}
+    {_code('    except PermissionError:')}
+    {_code('        fail(f"Permission denied: {{path}}")')}
 """)
+
+
+def complex_inputs() -> None:
+    """Print complex input handling documentation."""
+    cyan = COLORS['cyan']
+    bold = COLORS['bold']
+    yellow = COLORS['yellow']
+    nc = COLORS['nc']
+    
+    print(f"""
+{bold}COMPLEX INPUTS{_section('COMPLEX INPUTS')}
+
+Handle complex data from JSON, files, or piped input.
+
+{cyan}JSON FROM STDIN{cyan}
+   ──────────────────{nc}
+   Use stdin[T] to read JSON from stdin. Requires pydantic extra.
+
+   {_code('uv add microcli-toolkit --extra pydantic')}
+
+   {_code('from microcli import stdin')}
+   {_code('@command')}
+   {_code('def create(title: str, data: stdin[dict]):')}
+   {_code('    ok(f"Creating {{title}} with {{len(data)}} items")')}
+   
+   Usage: {_code('echo \'{{"items": [1, 2, 3]}}\' | mytool.py create "My Item"')}
+
+{cyan}PYDANTIC MODELS{cyan}
+   ────────────────{nc}
+   Validate JSON against a Pydantic model.
+
+   {_code('class Config(BaseModel):')}
+   {_code('    name: str')}
+   {_code('    tags: list[str] = []')}
+   
+   {_code('@command')}
+   {_code('def setup(cfg: stdin[Config]):')}
+   {_code('    ok(f"Configured {{cfg.name}}")')}
+
+{yellow}INVALID JSON SHOWS ERRORS:{nc}
+   {_code('✗ Invalid JSON: Expecting value')}
+""")
+
+
 
 
 def reference() -> None:
@@ -507,6 +551,8 @@ TOPICS = {
     'ok_fail': ok_fail,
     'utilities': utilities,
     'patterns': patterns,
+    'complex-inputs': complex_inputs,
+    'complex_inputs': complex_inputs,
     'reference': reference,
 }
 
