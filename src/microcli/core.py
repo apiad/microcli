@@ -524,11 +524,11 @@ def main():
     )
 
     parser.add_argument(
-        '--learn',
+        '--tour',
         nargs='?',
         const=True,
         metavar='COMMAND',
-        help='Show command tour and next steps (--learn or --learn <cmd>)'
+        help='Show command tour and next steps (--tour or --tour <cmd>)'
     )
 
     parser.add_argument(
@@ -590,13 +590,13 @@ def main():
 
     args = parser.parse_args()
 
-    # Handle --learn mode
-    if args.learn is not None:
+    # Handle --tour mode (auto-discovered command tours)
+    if args.tour is not None:
         from .learn import LearnMode
         source_file = str(sys.modules['__main__'].__file__)
         learn = LearnMode(source_file)
-        if isinstance(args.learn, str):
-            learn.show_command(args.learn)
+        if isinstance(args.tour, str):
+            learn.show_command(args.tour)
         else:
             learn.show_all()
         sys.exit(0)
@@ -618,6 +618,7 @@ def main():
     kwargs = dict(vars(args))
     kwargs.pop('command', None)
     kwargs.pop('dry_run', None)
+    kwargs.pop('tour', None)
 
     if cmd.stdin_params and STDIN_AVAILABLE:
         stdin_content = sys.stdin.read() if not sys.stdin.isatty() else ""

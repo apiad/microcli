@@ -20,9 +20,7 @@ def test_new_command_works():
     with tempfile.TemporaryDirectory() as tmpdir:
         result = subprocess.run(
             [sys.executable, "-m", "microcli", "new",
-             "--name", "testapp",
-             "--title", "Test App",
-             "--commands", "greet,bye"],
+             "testapp", "Test App", "greet,bye"],
             capture_output=True,
             text=True,
             cwd=tmpdir,
@@ -39,9 +37,7 @@ def test_new_command_creates_working_app():
         # Generate the app
         subprocess.run(
             [sys.executable, "-m", "microcli", "new",
-             "--name", "hello",
-             "--title", "Hello World",
-             "--commands", "greet"],
+             "hello", "Hello World", "greet"],
             capture_output=True,
             text=True,
             cwd=tmpdir,
@@ -57,7 +53,7 @@ def test_new_command_creates_working_app():
         assert "Hello World" in content
         assert "@command" in content
         assert "greet" in content
-        assert "///script" in content
+        assert "# /// script" in content
         assert "microcli learn" in content
 
 
