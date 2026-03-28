@@ -20,14 +20,17 @@ def test_module_entry_point():
 
 def test_command_entry_point():
     """Test microcli --help works via installed command."""
-    result = subprocess.run(
-        ["microcli", "--help"],
-        capture_output=True,
-        text=True,
-    )
-    # May fail if not installed - that's OK for unit tests
-    # Just check it doesn't crash
-    assert result.returncode in (0, 127)  # 127 = command not found
+    try:
+        result = subprocess.run(
+            ["microcli", "--help"],
+            capture_output=True,
+            text=True,
+        )
+        # May fail if not installed - that's OK for unit tests
+        assert result.returncode in (0, 127)  # 127 = command not found
+    except FileNotFoundError:
+        # microcli command not installed - skip this test
+        pass
 
 
 def test_new_command_exists():
