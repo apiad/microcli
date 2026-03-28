@@ -1,16 +1,21 @@
 """Tests for microcli learn command."""
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 
+MICROCLI_PYTHON = Path(__file__).parent.parent / ".venv" / "bin" / "python"
+SRC_PATH = str(Path(__file__).parent.parent / "src")
+
+
 def test_learn_shows_topics():
     """Test learn without args shows available topics."""
     result = subprocess.run(
-        [sys.executable, "-m", "microcli", "learn"],
+        [str(MICROCLI_PYTHON), "-m", "microcli", "learn"],
         capture_output=True,
         text=True,
-        cwd=Path(__file__).parent.parent / "src",
+        cwd=SRC_PATH,
     )
     assert result.returncode == 0, f"Failed: {result.stderr}"
     # Should show available topics
@@ -22,10 +27,10 @@ def test_learn_shows_topics():
 def test_learn_principles():
     """Test learn principles shows principles content."""
     result = subprocess.run(
-        [sys.executable, "-m", "microcli", "learn", "principles"],
+        [str(MICROCLI_PYTHON), "-m", "microcli", "learn", "--topic", "principles"],
         capture_output=True,
         text=True,
-        cwd=Path(__file__).parent.parent / "src",
+        cwd=SRC_PATH,
     )
     assert result.returncode == 0, f"Failed: {result.stderr}"
     assert "principles" in result.stdout.lower()
@@ -35,9 +40,9 @@ def test_learn_principles():
 def test_learn_unknown_topic():
     """Test learn with unknown topic shows error."""
     result = subprocess.run(
-        [sys.executable, "-m", "microcli", "learn", "nonexistent"],
+        [str(MICROCLI_PYTHON), "-m", "microcli", "learn", "--topic", "nonexistent"],
         capture_output=True,
         text=True,
-        cwd=Path(__file__).parent.parent / "src",
+        cwd=SRC_PATH,
     )
     assert result.returncode != 0, "Should fail for unknown topic"

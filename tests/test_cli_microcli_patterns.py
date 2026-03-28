@@ -6,6 +6,10 @@ import os
 from pathlib import Path
 
 
+MICROCLI_PYTHON = Path(__file__).parent.parent / ".venv" / "bin" / "python"
+SRC_PATH = str(Path(__file__).parent.parent / "src")
+
+
 def test_cli_uses_microcli_patterns():
     """Test that cli.py uses microcli patterns."""
     cli_path = Path(__file__).parent.parent / "src" / "microcli" / "cli.py"
@@ -19,12 +23,11 @@ def test_new_command_works():
     """Test new command creates a file."""
     with tempfile.TemporaryDirectory() as tmpdir:
         result = subprocess.run(
-            [sys.executable, "-m", "microcli", "new",
+            [str(MICROCLI_PYTHON), "-m", "microcli", "new",
              "testapp", "Test App", "greet,bye"],
             capture_output=True,
             text=True,
             cwd=tmpdir,
-            env={**os.environ, "PYTHONPATH": str(Path(__file__).parent.parent / "src")},
         )
         assert result.returncode == 0, f"Failed: {result.stderr}"
         # Should have created testapp.py
@@ -36,12 +39,11 @@ def test_new_command_creates_working_app():
     with tempfile.TemporaryDirectory() as tmpdir:
         # Generate the app
         subprocess.run(
-            [sys.executable, "-m", "microcli", "new",
+            [str(MICROCLI_PYTHON), "-m", "microcli", "new",
              "hello", "Hello World", "greet"],
             capture_output=True,
             text=True,
             cwd=tmpdir,
-            env={**os.environ, "PYTHONPATH": str(Path(__file__).parent.parent / "src")},
         )
         
         # Check the file exists and is valid Python
@@ -60,10 +62,10 @@ def test_new_command_creates_working_app():
 def test_learn_command_uses_microcli_patterns():
     """Test learn command uses microcli."""
     result = subprocess.run(
-        [sys.executable, "-m", "microcli", "learn"],
+        [str(MICROCLI_PYTHON), "-m", "microcli", "learn"],
         capture_output=True,
         text=True,
-        cwd=Path(__file__).parent.parent / "src",
+        cwd=SRC_PATH,
     )
     assert result.returncode == 0
     # Should show topics formatted nicely (using microcli patterns)

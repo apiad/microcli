@@ -543,11 +543,12 @@ Examples:
 
 def show_topic(name: str) -> bool:
     """Show a specific topic by name. Returns True if found."""
+    from .core import fail
+    
     topic = TOPICS.get(name)
     
     if topic is None:
-        print(f"Unknown topic: {name}")
-        print("Run --learn without arguments to see available topics.")
+        fail(f"Unknown topic: {name}")
         return False
     
     topic()
