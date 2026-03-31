@@ -30,7 +30,7 @@ pydantic = [
 ]
 
 [project.scripts]
-microcli = "microcli.core:main"
+microcli = "microcli.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/apiad/microcli"
