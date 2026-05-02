@@ -502,8 +502,10 @@ def main():
                     kwargs[param_name] = None
 
     # Execute command
-    # Print docstring before execution
-    if cmd.description:
+    # Print docstring before execution — but skip when stdout is being piped
+    # (so JSON / paths-only / other agent-friendly modes stay clean) or when
+    # MICROCLI_QUIET is set explicitly.
+    if cmd.description and sys.stdout.isatty() and not os.environ.get("MICROCLI_QUIET"):
         print(cmd.description)
         print("─" * 40)
 
