@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Annotated, Callable, Optional, Union
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 
 try:
     from .stdin import is_stdin_type, parse_stdin, _StdinType
@@ -46,7 +46,24 @@ class Result:
 # ============================================================================
 
 _dry_run = False
-_commands = {}
+
+# Invocation stack: each entry is the list of mount-prefix segments leading to
+# the currently-dispatching App. Used by Command.explain() so that chained
+# invocations rendered for an agent include the mount path the user actually
+# typed (e.g. `claude-toolkit image render` rather than just `render`).
+_invocation_stack: list[list[str]] = []
+
+
+def _push_invocation(prefix_chain: list[str]) -> None:
+    _invocation_stack.append(list(prefix_chain))
+
+
+def _pop_invocation() -> list[str]:
+    return _invocation_stack.pop()
+
+
+def _current_prefix() -> list[str]:
+    return _invocation_stack[-1] if _invocation_stack else []
 
 
 # ============================================================================
@@ -318,9 +335,13 @@ class Command:
                     # Positional argument
                     parts.append(str(value))
 
-        # Use the actual invocation from sys.argv[0]
+        # Use sys.argv[0] as the binary, then prepend any active mount prefix
+        # so chained `explain()` output reflects how the user actually invoked
+        # the parent app (e.g. `claude-toolkit image render`).
         invocation = sys.argv[0] if sys.argv else "app.py"
-        cmd = f"{invocation} {self.name}"
+        prefix_segments = _current_prefix()
+        cmd_path = " ".join([invocation, *prefix_segments, self.name])
+        cmd = cmd_path
         if parts:
             cmd += " " + " ".join(parts)
 
@@ -330,10 +351,12 @@ class Command:
         return self.func(**kwargs)
 
 
-def command(func: Callable) -> Callable:
-    """Decorator to register a function as a command."""
-    global _commands
+def _build_command(func: Callable) -> Command:
+    """Inspect a callable and build the Command metadata for it.
 
+    Pulled out of `App.command` so the construction is shared with the
+    legacy module-level `command` decorator.
+    """
     name = func.__name__.replace('_', '-')
     params = {}
 
@@ -372,155 +395,300 @@ def command(func: Callable) -> Callable:
             is_flag=is_flag,
         )
 
-    _commands[name] = Command(func, name, func.__doc__ or "", params, stdin_params)
-    return _commands[name]
+    return Command(func, name, func.__doc__ or "", params, stdin_params)
 
 
 # ============================================================================
-# MARK: Main Entry Point
+# MARK: App
 # ============================================================================
 
-def main():
-    """Main entry point - parse args and run commands."""
-    global _dry_run
+class App:
+    """An explicit microcli application with its own command registry.
 
-    parser = argparse.ArgumentParser(
-        description=__doc__,
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        add_help=False,
-    )
+    Unlike the module-level `m.command` shorthand (which mutates a hidden
+    default app), `App` lets multiple apps coexist in one process and lets
+    apps mount each other under prefix keys to compose a nested CLI.
 
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Print commands without executing'
-    )
+    Mount semantics
+    ---------------
+    * `app.mount(prefix, subapp)` exposes `subapp`'s commands under the
+      `prefix` key. Argparse subparsers nest one level per mount.
+    * Conflict policy: a prefix that collides with an existing top-level
+      command name (or another mount key) raises `ValueError` at mount time.
+      No implicit precedence.
+    * Mounting the same `App` instance under multiple roots is fine: the
+      sub-app's `_commands` dict is the source of truth; parents store only
+      a reference.
 
-    parser.add_argument(
-        '--tour',
-        nargs='?',
-        const=True,
-        metavar='COMMAND',
-        help='Show command tour and next steps (--tour or --tour <cmd>)'
-    )
+    Tour source resolution
+    ----------------------
+    The `--tour` machinery walks the source file of the module that
+    *constructed* the App. The constructor captures the caller's file via
+    `inspect`. If the App is built inside an `__init__.py` re-export shim
+    (where the caller is the wrong file), pass `tour_source=__file__`
+    explicitly to override.
+    """
 
-    parser.add_argument(
-        '--help', '-h',
-        action='help',
-        default=argparse.SUPPRESS,
-        help='show this help message'
-    )
+    def __init__(
+        self,
+        name: str,
+        description: Optional[str] = None,
+        tour_source: Optional[str] = None,
+    ):
+        self.name = name
+        self.description = description or ""
+        self._commands: dict[str, Command] = {}
+        self._subapps: dict[str, "App"] = {}
 
-    subparsers = parser.add_subparsers(dest='command', metavar='[command]')
+        if tour_source is None:
+            try:
+                frame = inspect.currentframe()
+                if frame is not None and frame.f_back is not None:
+                    tour_source = inspect.getfile(frame.f_back)
+            except (TypeError, ValueError):
+                tour_source = None
+        self.tour_source = tour_source
 
-    # Add command parsers
-    if not _commands:
-        sys.exit(0)
+    # -- registration --------------------------------------------------------
 
-    for name, cmd in _commands.items():
-        sub = subparsers.add_parser(
-            name,
-            help=cmd.description.split('\n')[0] if cmd.description else name,
-            description=cmd.description,
+    def command(self, func: Callable) -> Command:
+        """Register `func` as a command on this app."""
+        cmd = _build_command(func)
+        self._commands[cmd.name] = cmd
+        return cmd
+
+    def mount(self, prefix: str, subapp: "App") -> "App":
+        """Mount `subapp` under `prefix`. Raises on collision."""
+        if prefix in self._commands:
+            raise ValueError(
+                f"mount prefix {prefix!r} collides with command name in "
+                f"app {self.name!r}"
+            )
+        if prefix in self._subapps:
+            raise ValueError(
+                f"mount prefix {prefix!r} already mounted in app {self.name!r}"
+            )
+        self._subapps[prefix] = subapp
+        return subapp
+
+    # -- dispatch ------------------------------------------------------------
+
+    def main(self) -> None:
+        """Parse argv and dispatch a command.
+
+        Walks `sys.argv` to find the deepest mounted sub-app referenced by
+        the user, builds an argparse parser scoped to that sub-app's own
+        commands, then dispatches normally. The mount prefix chain is pushed
+        onto an invocation stack so `Command.explain()` can render the right
+        path.
+        """
+        global _dry_run
+
+        argv = sys.argv[1:]
+        active_app, prefix_chain, remaining = self._resolve_active(argv)
+
+        parser = active_app._build_parser(prefix_chain)
+        args = parser.parse_args(remaining)
+
+        # --tour: either the active app's full tour (`--tour`) or a single
+        # command tour (`--tour <cmd>`).
+        if getattr(args, "tour", None) is not None:
+            from .learn import LearnMode
+            tour_target = active_app.tour_source or (
+                getattr(sys.modules.get("__main__"), "__file__", None)
+            )
+            if tour_target is None:
+                fail("--tour requires a source file but none could be resolved")
+            learn = LearnMode(str(tour_target))
+            if isinstance(args.tour, str):
+                learn.show_command(args.tour)
+            else:
+                learn.show_all()
+                # Hint at mounted sub-apps so users know they can drill in.
+                if active_app._subapps:
+                    print()
+                    print("Mounted sub-apps (use `<prefix> --tour` to drill in):")
+                    for p, sub in sorted(active_app._subapps.items()):
+                        desc = sub.description or sub.name
+                        print(f"  {p:<15} {desc}")
+            sys.exit(0)
+
+        if getattr(args, "command", None) is None:
+            parser.print_help()
+            self._print_command_list(active_app)
+            sys.exit(0)
+
+        cmd = active_app._commands[args.command]
+        _dry_run = getattr(args, "dry_run", False)
+
+        kwargs = dict(vars(args))
+        kwargs.pop("command", None)
+        kwargs.pop("dry_run", None)
+        kwargs.pop("tour", None)
+
+        if cmd.stdin_params and STDIN_AVAILABLE:
+            stdin_content = sys.stdin.read() if not sys.stdin.isatty() else ""
+            for param_name, stdin_type in cmd.stdin_params.items():
+                if param_name not in kwargs or kwargs[param_name] is None:
+                    if stdin_content:
+                        kwargs[param_name] = parse_stdin(  # type: ignore
+                            stdin_content, stdin_type.inner_type
+                        )
+                    else:
+                        kwargs[param_name] = None
+
+        if cmd.description and sys.stdout.isatty() and not os.environ.get("MICROCLI_QUIET"):
+            print(cmd.description)
+            print("─" * 40)
+
+        _push_invocation(prefix_chain)
+        try:
+            try:
+                cmd(**kwargs)
+            except TypeError as e:
+                if "is required" in str(e):
+                    print(f"\nError: {e}", file=sys.stderr)
+                    invocation = " ".join([
+                        sys.argv[0], *prefix_chain, args.command
+                    ])
+                    print(f"\nUsage: {invocation} ", end="")
+                    required = [
+                        n for n, p in cmd.params.items() if not p.has_default
+                    ]
+                    if required:
+                        print(" ".join(required), end=" ")
+                    print("\nUse --help for more information.")
+                    sys.exit(1)
+                raise
+        finally:
+            _pop_invocation()
+
+    # -- helpers -------------------------------------------------------------
+
+    def _resolve_active(
+        self, argv: list[str]
+    ) -> tuple["App", list[str], list[str]]:
+        """Walk argv segments down through mounts to find the active app.
+
+        Returns (active_app, prefix_chain, remaining_argv).
+        Stops descending at the first segment that isn't a mount key.
+        """
+        active = self
+        chain: list[str] = []
+        i = 0
+        while i < len(argv) and argv[i] in active._subapps:
+            prefix = argv[i]
+            chain.append(prefix)
+            active = active._subapps[prefix]
+            i += 1
+        return active, chain, argv[i:]
+
+    def _build_parser(self, prefix_chain: list[str]) -> argparse.ArgumentParser:
+        """Build an argparse parser scoped to *this* app's commands.
+
+        Sub-apps reachable via `mount(...)` are exposed as additional
+        subparser entries that, when invoked, are intercepted earlier in
+        `_resolve_active` (so they don't dispatch through here). They're
+        listed here purely so `--help` shows them.
+        """
+        prog_parts = [Path(sys.argv[0]).name if sys.argv else "app", *prefix_chain]
+        prog = " ".join(prog_parts)
+
+        parser = argparse.ArgumentParser(
+            prog=prog,
+            description=self.description or None,
             formatter_class=argparse.RawDescriptionHelpFormatter,
+            add_help=False,
+        )
+        parser.add_argument(
+            "--dry-run", action="store_true",
+            help="Print commands without executing",
+        )
+        parser.add_argument(
+            "--tour", nargs="?", const=True, metavar="COMMAND",
+            help="Show command tour and next steps",
+        )
+        parser.add_argument(
+            "--help", "-h", action="help",
+            default=argparse.SUPPRESS,
+            help="show this help message",
         )
 
-        # Add arguments
-        positional = []
-        optional = []
+        if not self._commands and not self._subapps:
+            return parser
 
-        for arg_name, param in cmd.params.items():
-            if param.has_default:
-                optional.append((arg_name, param))
-            else:
-                positional.append((arg_name, param))
+        subparsers = parser.add_subparsers(dest="command", metavar="[command]")
 
-        # Positional args first
-        for arg_name, param in positional:
-            sub.add_argument(
-                arg_name,
-                type=param.type,
-                help=param.help,
+        # Sub-app mount keys (drill-in hint only — actual dispatch happens
+        # in _resolve_active, before this parser ever runs against them).
+        for prefix, sub in sorted(self._subapps.items()):
+            help_text = sub.description.split("\n")[0] if sub.description else f"{prefix} sub-app"
+            subparsers.add_parser(prefix, help=help_text, add_help=False)
+
+        # Real command parsers
+        for name, cmd in self._commands.items():
+            sub = subparsers.add_parser(
+                name,
+                help=cmd.description.split("\n")[0] if cmd.description else name,
+                description=cmd.description,
+                formatter_class=argparse.RawDescriptionHelpFormatter,
             )
-
-        # Optional args (--flags or --name)
-        for arg_name, param in optional:
-            if param.is_flag:
-                sub.add_argument(
-                    f'--{arg_name}',
-                    action='store_true',
-                    default=param.default,
-                    help=param.help or argparse.SUPPRESS,
-                )
-            else:
-                sub.add_argument(
-                    f'--{arg_name}',
-                    type=param.type,
-                    default=param.default,
-                    help=param.help or argparse.SUPPRESS,
-                )
-
-    args = parser.parse_args()
-
-    # Handle --tour mode (auto-discovered command tours)
-    if args.tour is not None:
-        from .learn import LearnMode
-        source_file = str(sys.modules['__main__'].__file__)
-        learn = LearnMode(source_file)
-        if isinstance(args.tour, str):
-            learn.show_command(args.tour)
-        else:
-            learn.show_all()
-        sys.exit(0)
-
-    if args.command is None:
-        # No command - show module help
-        parser.print_help()
-        print("\nCommands:")
-        for name, cmd in sorted(_commands.items()):
-            desc = cmd.description.split('\n')[0] if cmd.description else ""
-            print(f"  {name:<15} {desc}")
-        sys.exit(0)
-
-    cmd = _commands[args.command]
-
-    _dry_run = args.dry_run
-
-    # Build kwargs from args (copy to avoid modifying original)
-    kwargs = dict(vars(args))
-    kwargs.pop('command', None)
-    kwargs.pop('dry_run', None)
-    kwargs.pop('tour', None)
-
-    if cmd.stdin_params and STDIN_AVAILABLE:
-        stdin_content = sys.stdin.read() if not sys.stdin.isatty() else ""
-        for param_name, stdin_type in cmd.stdin_params.items():
-            if param_name not in kwargs or kwargs[param_name] is None:
-                if stdin_content:
-                    kwargs[param_name] = parse_stdin(stdin_content, stdin_type.inner_type)  # type: ignore
+            positional = []
+            optional = []
+            for arg_name, param in cmd.params.items():
+                if param.has_default:
+                    optional.append((arg_name, param))
                 else:
-                    kwargs[param_name] = None
+                    positional.append((arg_name, param))
 
-    # Execute command
-    # Print docstring before execution — but skip when stdout is being piped
-    # (so JSON / paths-only / other agent-friendly modes stay clean) or when
-    # MICROCLI_QUIET is set explicitly.
-    if cmd.description and sys.stdout.isatty() and not os.environ.get("MICROCLI_QUIET"):
-        print(cmd.description)
-        print("─" * 40)
+            for arg_name, param in positional:
+                sub.add_argument(arg_name, type=param.type, help=param.help)
 
-    try:
-        cmd(**kwargs)
-    except TypeError as e:
-        if "is required" in str(e):
-            print(f"\nError: {e}", file=sys.stderr)
-            print(f"\nUsage: {sys.argv[0]} {args.command} ", end="")
-            required = [
-                name for name, param in cmd.params.items()
-                if not param.has_default
-            ]
-            if required:
-                print(" ".join(required), end=" ")
-            print("\nUse --help for more information.")
-            sys.exit(1)
-        raise
+            for arg_name, param in optional:
+                if param.is_flag:
+                    sub.add_argument(
+                        f"--{arg_name}", action="store_true",
+                        default=param.default,
+                        help=param.help or argparse.SUPPRESS,
+                    )
+                else:
+                    sub.add_argument(
+                        f"--{arg_name}", type=param.type,
+                        default=param.default,
+                        help=param.help or argparse.SUPPRESS,
+                    )
+
+        return parser
+
+    def _print_command_list(self, app: "App") -> None:
+        if app._commands or app._subapps:
+            print("\nCommands:")
+            for name, cmd in sorted(app._commands.items()):
+                desc = cmd.description.split("\n")[0] if cmd.description else ""
+                print(f"  {name:<15} {desc}")
+            for prefix, sub in sorted(app._subapps.items()):
+                desc = sub.description.split("\n")[0] if sub.description else f"{prefix} sub-app"
+                print(f"  {prefix:<15} → {desc}")
+
+
+# ============================================================================
+# MARK: Module-level shorthand (back-compat)
+# ============================================================================
+
+# A hidden default App is created so existing one-file scripts using
+# `@m.command` and `m.main()` keep working without modification.
+_default_app = App(name="microcli")
+
+# `_commands` is preserved as a thin alias to the default app's registry for
+# any code (or test) that pokes the legacy global directly.
+_commands = _default_app._commands
+
+
+def command(func: Callable) -> Command:
+    """Decorator: register `func` as a command on the default app."""
+    return _default_app.command(func)
+
+
+def main() -> None:
+    """Module-level entry point — dispatches against the default app."""
+    _default_app.main()

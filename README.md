@@ -33,6 +33,34 @@ python hello.py hello Alice
 # ✓ Hello, Alice!
 ```
 
+## Composing apps with `App` + `mount`
+
+The module-level `m.command` / `m.main()` shorthand is fine for one-file
+scripts. When you want to compose multiple sub-CLIs under one entry point,
+construct explicit `App` instances and mount them under prefix keys:
+
+```python
+import microcli as m
+from mosaico import app as mosaico_app
+from mira import app as mira_app
+
+root = m.App(name="claude-toolkit", description="Alex's agent toolbox.")
+root.mount("image", mosaico_app)   # claude-toolkit image gen ...
+root.mount("mira", mira_app)       # claude-toolkit mira search ...
+
+@root.command
+def hello(name: str):
+    m.ok(f"Hello, {name}!")
+
+if __name__ == "__main__":
+    root.main()
+```
+
+Each `App` owns its own command registry — there are no name clashes between
+sub-apps. Mount-prefix collisions raise at mount time. `--tour` propagates
+naturally: `claude-toolkit --tour` shows the root tour and lists mounts;
+`claude-toolkit image --tour` shows mosaico's tour as if invoked standalone.
+
 ## The Three Principles
 
 1. **Validate before acting** — Check inputs before executing

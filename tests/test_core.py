@@ -154,4 +154,4 @@ def test_which_finds_command():
 
 def test_version_exists():
     from microcli import __version__
-    assert __version__ == "0.2.0"
+    assert __version__ == "0.4.0"

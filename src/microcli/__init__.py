@@ -15,9 +15,10 @@ Usage:
 Run: python hello.py hello Alice
 """
 
-__version__ = "0.2.0"
+__version__ = "0.4.0"
 
 from .core import (
+    App,
     command,
     main,
     sh,
@@ -50,6 +51,7 @@ except ImportError:
     parse_stdin = None
 
 __all__ = [
+    "App",
     "command",
     "main",
     "sh",
